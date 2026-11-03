@@ -3,3 +3,7 @@ body.json
 local.json
 login.json
 test_cliente_403.ps1
+.venv/
+__pycache__/
+.gemini/
+*.pyc

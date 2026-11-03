@@ -1,0 +1,127 @@
+query reservation verb=POST {
+  api_group = "Parking Management"
+  auth = "user"
+
+  input {
+    int location_id
+    int vaga_id
+    int vehicle_id
+    timestamp start_time
+    timestamp end_time
+  }
+
+  stack {
+    // Validate past time
+    precondition ($input.start_time >= "now") {
+      error_type = "inputerror"
+      error = "A data/hora de início não pode ser no passado."
+    }
+  
+    // Validate time interval
+    precondition ($input.end_time > $input.start_time) {
+      error_type = "inputerror"
+      error = "A data/hora de término deve ser posterior à de início."
+    }
+  
+    // Validate that vaga exists and belongs to location
+    db.get vaga {
+      field_name = "id"
+      field_value = $input.vaga_id
+    } as $vaga
+  
+    precondition ($vaga != null && $vaga.location_id == $input.location_id) {
+      error_type = "inputerror"
+      error = "Vaga inválida ou não pertence ao local informado."
+    }
+  
+    // Validate that vehicle belongs to user
+    db.get vehicle {
+      field_name = "id"
+      field_value = $input.vehicle_id
+    } as $vehicle
+  
+    precondition ($vehicle != null && $vehicle.user_id == $auth.id) {
+      error_type = "inputerror"
+      error = "Veículo inválido ou não pertence ao usuário."
+    }
+
+    // Get tarifa for location and vaga type
+    db.query tarifa {
+      where = $db.tarifa.location_id == $input.location_id && $db.tarifa.tipo_vaga == $vaga.tipo
+      return = {type: "single"}
+    } as $tarifa
+
+    precondition ($tarifa != null) {
+      error_type = "inputerror"
+      error = "Tarifa não cadastrada para este tipo de vaga no local."
+    }
+  
+    // Check for conflicting active reservations for the same vaga in the time range
+    db.query reservation {
+      where = ($db.reservation.vaga_id == $input.vaga_id && $db.reservation.status == "ativa" && $db.reservation.start_time < $input.end_time && $db.reservation.end_time > $input.start_time)
+      return = {type: "list"}
+    } as $conflicts
+  
+    precondition ($conflicts count == 0) {
+      error_type = "inputerror"
+      error = "A vaga já possui reserva ou ocupação conflitante neste horário."
+    }
+
+    var $cursor {
+      value = $input.start_time
+    }
+
+    var $horas {
+      value = 0
+    }
+
+    while ($cursor < $input.end_time) {
+      each {
+        var.update $cursor {
+          value = $cursor | add_secs_to_timestamp:3600
+        }
+        var.update $horas {
+          value = $horas + 1
+        }
+      }
+    }
+
+    conditional {
+      if ($horas < 1) {
+        var.update $horas {
+          value = 1
+        }
+      }
+    }
+
+    var $total_price {
+      value = $horas * $tarifa.valor_hora
+    }
+  
+    // Create reservation
+    db.add reservation {
+      data = {
+        created_at : "now"
+        user_id    : $auth.id
+        location_id: $input.location_id
+        vaga_id    : $input.vaga_id
+        vehicle_id : $input.vehicle_id
+        start_time : $input.start_time
+        end_time   : $input.end_time
+        status     : "ativa"
+        price      : $total_price
+      }
+    } as $reservation
+  
+    // Update vaga status to reservada
+    db.edit vaga {
+      field_name = "id"
+      field_value = $input.vaga_id
+      data = {status: "reservada"}
+    } as $updated_vaga
+  }
+
+  response = $reservation
+  tags = ["reservation-management"]
+  guid = "reservation-post-guid-001"
+}

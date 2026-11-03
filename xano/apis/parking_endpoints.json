@@ -1,0 +1,55 @@
+{
+  "group": "Parking Management",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/locations",
+      "description": "List all parking locations.",
+      "xanoscript": [
+        "return db.query_all(Location);"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/locations",
+      "description": "Create a new parking location (Admin only).",
+      "xanoscript": [
+        "if (auth.user.role != 'admin') { error(403, 'Forbidden'); }",
+        "input name;",
+        "return db.insert(Location, { name: name });"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/admin/locations/{id}",
+      "description": "Delete location if no dependencies exist (Admin only).",
+      "xanoscript": [
+        "if (auth.user.role != 'admin') { error(403, 'Forbidden'); }",
+        "input id;",
+        "slots = db.query(Slot, { location_id: id });",
+        "if (slots) { error(400, 'Cannot delete location with active slots'); }",
+        "db.delete(Location, id);"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/slots",
+      "description": "Create a new parking slot (Admin only).",
+      "xanoscript": [
+        "if (auth.user.role != 'admin') { error(403, 'Forbidden'); }",
+        "input location_id; input number; input type;",
+        "return db.insert(Slot, { location_id: location_id, number: number, type: type });"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/rates",
+      "description": "Set hourly rate for location and vehicle type (Admin only).",
+      "xanoscript": [
+        "if (auth.user.role != 'admin') { error(403, 'Forbidden'); }",
+        "input location_id; input type; input price_per_hour;",
+        "return db.upsert(Rate, { location_id: location_id, type: type }, { price_per_hour: price_per_hour });"
+      ]
+    }
+  ]
+}

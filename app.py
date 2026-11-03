@@ -78,7 +78,7 @@ def api_request(method, endpoint, data=None, auth=True, base_url=None):
         headers["Authorization"] = f"Bearer {st.session_state.token}"
     
     if not base_url:
-        if endpoint.startswith("/location") or endpoint.startswith("/vaga") or endpoint.startswith("/tarifa"):
+        if endpoint.startswith("/location") or endpoint.startswith("/vaga") or endpoint.startswith("/tarifa") or endpoint.startswith("/reservation") or endpoint.startswith("/admin/reservation"):
             if not XANO_PARKING_URL:
                 return None, "Erro de Configuração: XANO_PARKING_URL não está definida no arquivo .env."
             base = XANO_PARKING_URL
@@ -101,10 +101,12 @@ def api_request(method, endpoint, data=None, auth=True, base_url=None):
             return None, f"Método HTTP inválido: {method} em {url}"
         
         if response.status_code in [200, 201]:
+            if not response.text.strip():
+                return {}, None
             try:
                 return response.json(), None
-            except:
-                return {}, None
+            except Exception:
+                return {"raw": response.text}, None
         elif response.status_code == 401 or response.status_code == 403:
             # Se token expirou, limpa sessão para forçar novo login
             if auth:
@@ -175,7 +177,7 @@ def auth_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
-        st.markdown(f"## :material/directions_car: {TEXTS['app_title']}")
+        st.markdown(f"## :material/local_parking: {TEXTS['app_title']}")
         st.caption(TEXTS['app_subtitle'])
         st.markdown("</div>", unsafe_allow_html=True)
         st.write("")
@@ -255,6 +257,9 @@ def auth_page():
                                 else:
                                     st.toast("Conta criada com sucesso! Faça login na aba ao lado.", icon=":material/celebration:")
 
+def fetch_user_vehicles():
+    return api_request("GET", "/vehicle", base_url=XANO_VEHICLES_URL)
+
 # --- TELA MEUS VEÍCULOS (D) ---
 def page_my_vehicles():
     st.title("Meus Veículos")
@@ -268,7 +273,7 @@ def page_my_vehicles():
     """, unsafe_allow_html=True)
 
     with st.spinner("Carregando veículos..."):
-        vehicles, err = api_request("GET", "/vehicle", base_url=XANO_VEHICLES_URL)
+        vehicles, err = fetch_user_vehicles()
     
     is_empty = not vehicles or err is not None
     
@@ -423,14 +428,125 @@ def page_my_vehicles():
                             st.session_state[confirm_key] = False
                             st.rerun()
 
-# --- TELAS FUTURAS (PLACEHOLDERS) ---
+# --- TELAS DE RESERVAS ---
 def page_consult_reservations():
     st.header("🅿️ Consultar & Reservar Vagas")
-    st.info("🚧 Funcionalidade em desenvolvimento. Disponível em breve.")
+    
+    locations, err_loc = api_request("GET", "/location")
+    if err_loc:
+        st.error(err_loc)
+        return
+    if not locations:
+        st.info("Nenhum local cadastrado ou disponível no momento.")
+        return
+
+    loc_options = {loc["name"]: loc["id"] for loc in locations}
+    selected_loc_name = st.selectbox("Selecione o Local", list(loc_options.keys()))
+    selected_loc_id = loc_options[selected_loc_name]
+
+    vehicles, err_veh = fetch_user_vehicles()
+    if err_veh:
+        st.error(err_veh)
+        return
+    if not vehicles:
+        st.warning("Você precisa cadastrar pelo menos um veículo em 'Meus Veículos' antes de fazer reservas.")
+        return
+
+    veh_options = {f"{v.get('brand')} {v.get('model')} ({v.get('plate')}) - {v.get('type') if v.get('type') else 'tipo não informado'}": v for v in vehicles}
+    selected_veh_label = st.selectbox("Selecione o Veículo", list(veh_options.keys()))
+    selected_veh = veh_options[selected_veh_label]
+
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        start_date = st.date_input("Data de Início", value=datetime.now().date())
+        start_time = st.time_input("Horário de Início", value=datetime.now().time())
+    with col_d2:
+        end_date = st.date_input("Data de Término", value=datetime.now().date())
+        end_time = st.time_input("Horário de Término", value=datetime.now().time())
+
+    start_dt = datetime.combine(start_date, start_time).isoformat()
+    end_dt = datetime.combine(end_date, end_time).isoformat()
+
+    if "search_vagas" not in st.session_state:
+        st.session_state.search_vagas = None
+
+    if st.button("Consultar Disponibilidade", type="primary"):
+        with st.spinner("Buscando vagas disponíveis..."):
+            avail_url = f"/reservation/availability?location_id={selected_loc_id}&vehicle_id={selected_veh.get('id')}&start_time={start_dt}&end_time={end_dt}"
+            vagas, err_avail = api_request("GET", avail_url)
+            if err_avail:
+                st.error(err_avail)
+                st.session_state.search_vagas = None
+            elif not vagas:
+                st.info("Nenhuma vaga disponível para este período e tipo de veículo.")
+                st.session_state.search_vagas = None
+            else:
+                st.session_state.search_vagas = {
+                    "vagas": vagas,
+                    "location_id": selected_loc_id,
+                    "vehicle_id": selected_veh.get("id"),
+                    "start_time": start_dt,
+                    "end_time": end_dt
+                }
+
+    if st.session_state.search_vagas:
+        search_data = st.session_state.search_vagas
+        vagas = search_data.get("vagas", [])
+        st.success(f"{len(vagas)} vaga(s) disponível(is)!")
+        for vaga in vagas:
+            col_v1, col_v2 = st.columns([3, 1])
+            with col_v1:
+                st.markdown(f"Vaga **{vaga.get('numero')}** (Tipo: `{vaga.get('tipo')}`)")
+            with col_v2:
+                if st.button("Reservar", key=f"book_vaga_{vaga.get('id')}"):
+                    payload = {
+                        "location_id": search_data["location_id"],
+                        "vaga_id": vaga.get("id"),
+                        "vehicle_id": search_data["vehicle_id"],
+                        "start_time": search_data["start_time"],
+                        "end_time": search_data["end_time"]
+                    }
+                    with st.spinner("Confirmando reserva..."):
+                        res_data, err_book = api_request("POST", "/reservation", payload)
+                        if err_book:
+                            st.error(f"Erro ao realizar reserva: {err_book}")
+                        elif not isinstance(res_data, dict) or not res_data.get("id"):
+                            st.error(f"Erro: A resposta da API não retornou o ID da reserva. Resposta recebida: {res_data}")
+                        else:
+                            st.session_state.success_message = f"Reserva #{res_data.get('id')} realizada com sucesso!"
+                            st.session_state.search_vagas = None
+                            st.session_state.nav_index = 2
+                            st.rerun()
 
 def page_my_reservations():
-    st.header("📋 Minhas Reservas")
-    st.info("🚧 Funcionalidade em desenvolvimento. Disponível em breve.")
+    st.header(":material/receipt_long: Minhas Reservas")
+
+    if "success_message" in st.session_state and st.session_state.success_message:
+        st.success(st.session_state.success_message)
+        st.session_state.success_message = None
+
+    reservations, err = api_request("GET", "/reservation")
+    if err:
+        st.error(err)
+    elif not reservations:
+        st.info("Você não possui reservas cadastradas.")
+    else:
+        for r in reservations:
+            with st.container(border=True):
+                col_r1, col_r2 = st.columns([3, 1])
+                with col_r1:
+                    st.markdown(f"**Reserva #{r.get('id')}** - Status: `{r.get('status')}`")
+                    st.markdown(f"Início: `{r.get('start_time')}` | Término: `{r.get('end_time')}`")
+                    st.markdown(f"Preço: R$ {r.get('price', 0):.2f}")
+                with col_r2:
+                    if r.get('status') == 'ativa':
+                        if st.button("Cancelar", key=f"cancel_res_{r.get('id')}"):
+                            _, err_del = api_request("DELETE", f"/reservation/{r.get('id')}")
+                            if err_del:
+                                st.error(err_del)
+                            else:
+                                st.toast("Reserva cancelada com sucesso!", icon=":material/check_circle:")
+                                st.rerun()
 
 @st.dialog("Editar Local")
 def edit_location_dialog(loc_id, loc_name, loc_address, loc_desc):
@@ -486,6 +602,9 @@ def page_admin_locations():
         return
 
     locations, err = api_request("GET", "/location")
+    if err:
+        st.error(err)
+        return
     
     with st.expander(":material/add_circle: Adicionar Local", expanded=not locations):
         with st.form("add_location", clear_on_submit=True):
@@ -584,8 +703,11 @@ def page_admin_rates():
         return
 
     locations, err_l = api_request("GET", "/location")
-    if err_l or not locations:
-        st.info("Cadastre locais antes de definir tarifas.")
+    if err_l:
+        st.error(err_l)
+        return
+    if not locations:
+        st.info("Nenhum local cadastrado ou disponível no momento.")
         return
 
     loc_options = {loc["name"]: loc["id"] for loc in locations}
@@ -639,7 +761,32 @@ def page_admin_rates():
 
 def page_admin_reservations():
     st.header("📊 Todas as Reservas")
-    st.info("🚧 Funcionalidade em desenvolvimento. Disponível em breve.")
+    if st.session_state.user_role != "admin":
+        st.error("Acesso restrito a administradores.")
+        return
+
+    reservations, err = api_request("GET", "/admin/reservation")
+    if err:
+        st.error(err)
+    elif not reservations:
+        st.info("Nenhuma reserva cadastrada no sistema.")
+    else:
+        for r in reservations:
+            with st.container(border=True):
+                col_a1, col_a2 = st.columns([3, 1])
+                with col_a1:
+                    st.markdown(f"**Reserva #{r.get('id')}** (Usuário ID: {r.get('user_id')}) - Status: `{r.get('status')}`")
+                    st.markdown(f"Local: {r.get('location_id')} | Vaga: {r.get('vaga_id')} | Veículo: {r.get('vehicle_id')}")
+                    st.markdown(f"Início: `{r.get('start_time')}` | Término: `{r.get('end_time')}` | R$ {r.get('price', 0):.2f}")
+                with col_a2:
+                    if r.get('status') == 'ativa':
+                        if st.button("Cancelar Admin", key=f"admin_cancel_res_{r.get('id')}"):
+                            _, err_del = api_request("DELETE", f"/admin/reservation/{r.get('id')}")
+                            if err_del:
+                                st.error(err_del)
+                            else:
+                                st.toast("Reserva cancelada pelo administrador!", icon=":material/check_circle:")
+                                st.rerun()
 
 # --- CONTROLE DE FLUXO PRINCIPAL E SIDEBAR (A, B) ---
 if not st.session_state.token:
@@ -669,23 +816,34 @@ else:
     st.sidebar.divider()
     
     if role == "admin":
-        menu_options = ["Locais & Vagas", "Tarifas", "Meus Veículos"]
+        menu_options = ["Locais & Vagas", "Tarifas", "Meus Veículos", "Todas as Reservas"]
     else:
-        menu_options = ["Meus Veículos"]
+        menu_options = ["Meus Veículos", "Consultar & Reservar", "Minhas Reservas"]
             
     if len(menu_options) > 1:
         st.sidebar.markdown("### Navegação")
+        if "nav_index" not in st.session_state:
+            st.session_state.nav_index = 0
+        if st.session_state.nav_index >= len(menu_options):
+            st.session_state.nav_index = 0
+            
         selected_page = st.sidebar.radio(
             "Selecione",
             menu_options,
+            index=st.session_state.nav_index,
             format_func=lambda x: (
                 ":material/domain: Locais & Vagas" if x == "Locais & Vagas" else
                 ":material/payments: Tarifas" if x == "Tarifas" else
                 ":material/directions_car: Meus Veículos" if "Veículos" in x else
+                ":material/directions_car: Consultar & Reservar" if x == "Consultar & Reservar" else
+                ":material/receipt_long: Minhas Reservas" if x == "Minhas Reservas" else
+                ":material/bar_chart: Todas as Reservas" if x == "Todas as Reservas" else
                 f":material/menu: {x}"
             ),
             label_visibility="collapsed"
         )
+        if selected_page in menu_options:
+            st.session_state.nav_index = menu_options.index(selected_page)
     else:
         selected_page = menu_options[0]
         st.sidebar.markdown(f":material/directions_car: **{selected_page}**")

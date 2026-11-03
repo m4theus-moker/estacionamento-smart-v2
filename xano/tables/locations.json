@@ -1,0 +1,9 @@
+{
+  "name": "Location",
+  "description": "Table storing parking locations / branches",
+  "schema": {
+    "id": { "type": "int", "primary_key": true, "increment": true },
+    "name": { "type": "text", "required": true, "unique": true },
+    "created_at": { "type": "timestamp", "default": "now" }
+  }
+}

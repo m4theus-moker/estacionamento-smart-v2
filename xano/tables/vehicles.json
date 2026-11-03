@@ -1,0 +1,15 @@
+{
+  "name": "Vehicle",
+  "description": "Table storing client vehicles",
+  "schema": {
+    "id": { "type": "int", "primary_key": true, "increment": true },
+    "user_id": { "type": "int", "reference": "User.id", "on_delete": "cascade" },
+    "plate": { "type": "text", "required": true },
+    "brand": { "type": "text", "required": true },
+    "model": { "type": "text", "required": true },
+    "color": { "type": "text", "required": true },
+    "year": { "type": "int", "required": true },
+    "type": { "type": "text", "required": true, "enum": ["carro", "moto", "pcd"] },
+    "created_at": { "type": "timestamp", "default": "now" }
+  }
+}

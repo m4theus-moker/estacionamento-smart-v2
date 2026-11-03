@@ -1,0 +1,48 @@
+{
+  "group": "Authentication",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/auth/signup",
+      "description": "Register a new client user. Role is forced to client.",
+      "xanoscript": [
+        "input email; input password; input name; input cpf; input phone;",
+        "password_hash = security.password_hash(password);",
+        "db.insert(User, { email: email, password: password_hash, name: name, cpf: cpf, phone: phone, role: 'client' })"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login",
+      "description": "Authenticate user and return authToken.",
+      "xanoscript": [
+        "input email; input password;",
+        "user = db.query(User, { email: email });",
+        "if (!user || !security.password_verify(password, user.password)) { error(401, 'Invalid credentials'); }",
+        "token = security.create_auth_token(user.id);",
+        "return { authToken: token, role: user.role }"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/auth/me",
+      "description": "Return current authenticated user profile.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "user = db.get(User, user_id);",
+        "return { id: user.id, email: user.email, name: user.name, cpf: user.cpf, phone: user.phone, role: user.role }"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/locations",
+      "description": "List parking locations with id and name for authenticated users.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "if (!user_id) { error(401, 'Unauthorized'); }",
+        "locations = db.query_all(Location);",
+        "return locations.map(l => ({ id: l.id, name: l.name }));"
+      ]
+    }
+  ]
+}

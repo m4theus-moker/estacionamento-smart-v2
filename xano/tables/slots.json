@@ -1,0 +1,11 @@
+{
+  "name": "Slot",
+  "description": "Table storing parking slots within locations",
+  "schema": {
+    "id": { "type": "int", "primary_key": true, "increment": true },
+    "location_id": { "type": "int", "reference": "Location.id", "on_delete": "cascade" },
+    "number": { "type": "text", "required": true },
+    "type": { "type": "text", "required": true, "enum": ["carro", "moto", "pcd"] },
+    "created_at": { "type": "timestamp", "default": "now" }
+  }
+}

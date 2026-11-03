@@ -1,0 +1,10 @@
+{
+  "name": "Rate",
+  "description": "Table storing hourly rates by location and vehicle type",
+  "schema": {
+    "id": { "type": "int", "primary_key": true, "increment": true },
+    "location_id": { "type": "int", "reference": "Location.id", "on_delete": "cascade" },
+    "type": { "type": "text", "required": true, "enum": ["carro", "moto", "pcd"] },
+    "price_per_hour": { "type": "decimal", "required": true }
+  }
+}

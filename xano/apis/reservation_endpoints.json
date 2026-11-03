@@ -1,0 +1,78 @@
+{
+  "group": "Reservations & Availability",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/slots/available",
+      "description": "Consult available slots for given location and time range.",
+      "xanoscript": [
+        "input location_id; input start; input end;",
+        "slots = db.query_all(Slot, { location_id: location_id });",
+        "available_slots = [];",
+        "for (slot in slots) {",
+        "  conflicts = db.query_all(Reservation, { slot_id: slot.id, status: 'active' });",
+        "  has_conflict = false;",
+        "  for (res in conflicts) {",
+        "    if (res.start_time < end && res.end_time > start) { has_conflict = true; break; }",
+        "  }",
+        "  if (!has_conflict) { available_slots.push(slot); }",
+        "}",
+        "return available_slots;"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/reservations",
+      "description": "Create reservation with conflict check (409) and hourly ceiling price calculation.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "input slot_id; input vehicle_id; input start_time; input end_time;",
+        "if (start_time >= end_time) { error(400, 'End time must be after start time'); }",
+        "conflicts = db.query_all(Reservation, { slot_id: slot_id, status: 'active' });",
+        "for (res in conflicts) {",
+        "  if (res.start_time < end_time && res.end_time > start_time) { error(409, 'Slot already reserved in this period'); }",
+        "}",
+        "slot = db.get(Slot, slot_id);",
+        "rate = db.query(Rate, { location_id: slot.location_id, type: slot.type });",
+        "duration_seconds = datetime.diff_seconds(end_time, start_time);",
+        "hours = math.ceil(duration_seconds / 3600);",
+        "price = hours * rate.price_per_hour;",
+        "return db.insert(Reservation, { user_id: user_id, slot_id: slot_id, vehicle_id: vehicle_id, start_time: start_time, end_time: end_time, status: 'active', price: price });"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/client/reservations",
+      "description": "List reservations for authenticated client.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "return db.query_all(Reservation, { user_id: user_id });"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/reservations",
+      "description": "List all reservations by location (Admin only).",
+      "xanoscript": [
+        "if (auth.user.role != 'admin') { error(403, 'Forbidden'); }",
+        "input location_id;",
+        "slots = db.query_all(Slot, { location_id: location_id });",
+        "slot_ids = slots.map(s => s.id);",
+        "return db.query_all(Reservation, { slot_id__in: slot_ids });"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/reservations/{id}/cancel",
+      "description": "Cancel a reservation.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "user_role = auth.user.role;",
+        "input id;",
+        "res = db.get(Reservation, id);",
+        "if (!res || (res.user_id != user_id && user_role != 'admin')) { error(404, 'Reservation not found'); }",
+        "db.update(Reservation, id, { status: 'cancelled' });"
+      ]
+    }
+  ]
+}

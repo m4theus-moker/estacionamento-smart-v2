@@ -1,0 +1,14 @@
+{
+  "name": "User",
+  "description": "Table storing clients and administrators",
+  "schema": {
+    "id": { "type": "int", "primary_key": true, "increment": true },
+    "email": { "type": "text", "unique": true, "indexed": true },
+    "password": { "type": "text", "auth_hash": true },
+    "name": { "type": "text" },
+    "cpf": { "type": "text" },
+    "phone": { "type": "text" },
+    "role": { "type": "text", "default": "client", "enum": ["client", "admin"] },
+    "created_at": { "type": "timestamp", "default": "now" }
+  }
+}

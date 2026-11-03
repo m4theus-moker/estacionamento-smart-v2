@@ -1,0 +1,15 @@
+{
+  "name": "Reservation",
+  "description": "Table storing parking reservations",
+  "schema": {
+    "id": { "type": "int", "primary_key": true, "increment": true },
+    "user_id": { "type": "int", "reference": "User.id" },
+    "slot_id": { "type": "int", "reference": "Slot.id" },
+    "vehicle_id": { "type": "int", "reference": "Vehicle.id" },
+    "start_time": { "type": "timestamp", "required": true },
+    "end_time": { "type": "timestamp", "required": true },
+    "status": { "type": "text", "default": "active", "enum": ["active", "cancelled"] },
+    "price": { "type": "decimal", "required": true },
+    "created_at": { "type": "timestamp", "default": "now" }
+  }
+}

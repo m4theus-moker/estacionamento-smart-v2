@@ -1,0 +1,36 @@
+{
+  "group": "Client Vehicles",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/vehicle",
+      "description": "List vehicles belonging to authenticated client.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "return db.query_all(Vehicle, { user_id: user_id });"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vehicle",
+      "description": "Register a new vehicle for authenticated client.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "input plate; input brand; input model; input color; input year; input type;",
+        "return db.insert(Vehicle, { user_id: user_id, plate: plate, brand: brand, model: model, color: color, year: year, type: type });"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/vehicle/{id}",
+      "description": "Delete client vehicle ensuring ownership.",
+      "xanoscript": [
+        "user_id = auth.user_id;",
+        "input id;",
+        "vehicle = db.get(Vehicle, id);",
+        "if (!vehicle || vehicle.user_id != user_id) { error(404, 'Vehicle not found'); }",
+        "db.delete(Vehicle, id);"
+      ]
+    }
+  ]
+}
