@@ -5,7 +5,6 @@ function "Quick Start/backfill_ticket_codes" {
 
   stack {
     db.query reservation {
-      where = ($db.reservation.ticket_code == null || $db.reservation.ticket_code == "")
       return = {type: "list"}
     } as $reservations
 
@@ -15,16 +14,20 @@ function "Quick Start/backfill_ticket_codes" {
 
     foreach ($reservations) {
       each as $res {
-        function.run "Quick Start/generate_ticket_code" {} as $ticket_result
+        conditional {
+          if ($res.ticket_code == null || $res.ticket_code == "") {
+            function.run "Quick Start/generate_ticket_code" {} as $ticket_result
 
-        db.edit reservation {
-          field_name = "id"
-          field_value = $res.id
-          data = {ticket_code: $ticket_result.ticket_code}
-        } as $updated_res
+            db.edit reservation {
+              field_name = "id"
+              field_value = $res.id
+              data = {ticket_code: $ticket_result.ticket_code}
+            } as $updated_res
 
-        var.update $updated_count {
-          value = $updated_count + 1
+            var.update $updated_count {
+              value = $updated_count + 1
+            }
+          }
         }
       }
     }
