@@ -98,8 +98,6 @@ query reservation verb=POST {
       value = $horas * $tarifa.valor_hora
     }
   
-    function.run "Quick Start/generate_ticket_code" {} as $ticket_result
-  
     db.add reservation {
       data = {
         created_at : "now"
@@ -111,7 +109,6 @@ query reservation verb=POST {
         end_time   : $input.end_time
         status     : "ativa"
         price      : $total_price
-        ticket_code: $ticket_result.ticket_code
       }
     } as $reservation
   }
