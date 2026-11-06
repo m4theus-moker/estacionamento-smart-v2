@@ -1,10 +1,9 @@
-# Reservations Admin Spec
+# reservations-admin Specification
 
 ## Purpose
-
 Gerencia o acesso administrativo para listagem de todas as reservas do sistema e cancelamento de qualquer reserva, além de travas de exclusão para locais, vagas e tarifas vinculadas.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Administrative reservation oversight and cancellation
 The Xano backend SHALL provide endpoints for administrators to list all system reservations and cancel any reservation, enforcing strict administrator authorization (`role = admin`).

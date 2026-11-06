@@ -1,10 +1,9 @@
-# Reservations Booking Spec
+# reservations-booking Specification
 
 ## Purpose
-
 Gerencia a criação de reservas por clientes, listagem das próprias reservas e cancelamento, com validações de compatibilidade, horários, preços e concorrência.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Client reservation creation with compatibility and pricing
 The Xano backend SHALL allow authenticated clients to create reservations with automated ceiling-hour pricing snapshots and strict vehicle-slot compatibility validation.

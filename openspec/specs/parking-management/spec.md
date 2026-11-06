@@ -65,3 +65,14 @@ The backend SHALL provide endpoints via `XANO_PARKING_URL` for administrators to
 #### Scenario: Rate validation failure for zero or negative values
 - **WHEN** an administrator attempts to set `valor_hora <= 0`
 - **THEN** the system rejects the request with an input error
+
+### Requirement: Consult & Reserve frontend workflow
+The Streamlit frontend SHALL set default end time to start time + 1h, validate that end time > start time and start time is not in the past, display estimated price before confirmation, render parking slots in a visual grid (free/busy), and shorten sidebar label to "Reservar".
+
+#### Scenario: Reservation form validation and pricing estimation
+- **WHEN** a user selects start and end times for reservation in Streamlit
+- **THEN** the system validates times, calculates and displays estimated price, and allows booking.
+
+#### Scenario: Visual parking slot grid
+- **WHEN** a user queries slots for a location and period in Streamlit
+- **THEN** the available and busy slots are displayed in a visual grid layout.

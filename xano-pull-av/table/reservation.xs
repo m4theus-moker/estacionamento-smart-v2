@@ -15,6 +15,7 @@ table reservation {
     }
   
     decimal price
+    text ticket_code?
   }
 
   index = [

@@ -1,10 +1,9 @@
-# Reservations Availability Spec
+# reservations-availability Specification
 
 ## Purpose
-
 Gerencia a consulta de disponibilidade de vagas livres por local, tipo de veículo e período (início/fim), baseando-se estritamente em sobreposições de reservas ativas.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Availability check based on active reservation overlaps
 The Xano backend SHALL determine slot availability in a location for a given period and vehicle type by verifying that no active reservations overlap with the requested interval.

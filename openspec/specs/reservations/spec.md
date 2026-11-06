@@ -33,8 +33,12 @@ The Xano backend SHALL calculate reservation prices by rounding up hours and mul
 - **THEN** the system rejects the reservation
 
 ### Requirement: Reservation cancellation
-The Xano backend SHALL allow clients to cancel their own reservations and administrators to cancel any reservation, updating the status to cancelled while maintaining the record.
+The Xano backend SHALL allow clients to cancel their own reservations and administrators to cancel any reservation, updating the status to cancelled while maintaining the record. The Streamlit frontend SHALL format timestamps as `dd/mm/aaaa HH:MM` (America/Sao_Paulo timezone), render clean status badges (`ativa` = green, `cancelada` = red/gray, `concluída` = blue, capitalized without monospace), show full context cards (location, slot, vehicle model + plate), sort newest to oldest, provide "Ativas" and "Histórico" tabs, require confirmation via `st.dialog` before canceling, and show a friendly empty state.
 
 #### Scenario: Successful cancellation by owner
 - **WHEN** a client cancels their own active reservation
 - **THEN** the system updates its status to cancelled
+
+#### Scenario: Reservation display and management UX
+- **WHEN** a client views their reservations in Streamlit
+- **THEN** dates are formatted in `dd/mm/aaaa HH:MM` (America/Sao_Paulo), cards show status badges and context details, items are sorted newest first, separated into "Ativas" and "Histórico" tabs, cancellation requires `st.dialog` confirmation, and empty states provide guidance.

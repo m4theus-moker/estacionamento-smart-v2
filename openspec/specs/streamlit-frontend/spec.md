@@ -7,7 +7,7 @@ Define a interface de usuário em Streamlit que consome os endpoints REST do Xan
 ## Requirements
 
 ### Requirement: Streamlit frontend user interface
-The Streamlit frontend SHALL provide pages for user login/registration, client vehicle management, slot availability and reservations, and administrative management of locations, slots, rates, and reservations, communicating exclusively via Xano REST APIs.
+The Streamlit frontend SHALL provide pages for user login/registration, client vehicle management, slot availability and reservations, and administrative management of locations, slots, rates, and reservations, communicating exclusively via Xano REST APIs. The frontend SHALL feature compact metrics cards with icons, distinct sidebar item icons, truncated usernames with tooltips, improved contrast for placeholders/labels, and standardized spacing and field heights across screens.
 
 #### Scenario: Client navigation and reservation flow
 - **WHEN** a client logs into Streamlit and requests available slots for a location and period
@@ -16,3 +16,7 @@ The Streamlit frontend SHALL provide pages for user login/registration, client v
 #### Scenario: Admin management view
 - **WHEN** an administrator logs into Streamlit
 - **THEN** Streamlit displays management views for locations, slots, rates, and all location reservations via Xano APIs
+
+#### Scenario: Frontend layout and UX enhancements
+- **WHEN** any user navigates the Streamlit app
+- **THEN** the sidebar displays icons, shortened nav label, truncated username with tooltip, metrics cards are compact with icons, and contrast/spacing are standardized.
