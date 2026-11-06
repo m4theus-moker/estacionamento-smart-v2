@@ -24,7 +24,7 @@ function "Quick Start/generate_ticket_code" {
         security.create_uuid as $uuid
       
         var $clean {
-          value = $uuid|replace:"-":""|upper|replace:"0":"G"|replace:"1":"H"
+          value = $uuid|to_upper|replace:"0":"G"|replace:"1":"H"
         }
       
         var $code {
@@ -50,7 +50,7 @@ function "Quick Start/generate_ticket_code" {
     }
   
     precondition ($success == true) {
-      error_type = "internal"
+      error_type = "inputerror"
       error = "Falha ao gerar código de ticket único após 5 tentativas."
     }
   }

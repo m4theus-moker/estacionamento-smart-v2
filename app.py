@@ -3,11 +3,50 @@ import requests
 import os
 import re
 import html
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 # Carrega variáveis de ambiente do arquivo .env
 load_dotenv()
+
+def format_timestamp(ts):
+    if not ts:
+        return "-"
+    try:
+        if isinstance(ts, (int, float)) or (isinstance(ts, str) and ts.isdigit()):
+            val = float(ts)
+            if val > 1e11:
+                val = val / 1000.0
+            dt = datetime.fromtimestamp(val)
+        elif isinstance(ts, str):
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        else:
+            return str(ts)
+        
+        if ZoneInfo:
+            try:
+                dt = dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+            except Exception:
+                pass
+        return dt.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(ts)
+
+def render_status_badge(status):
+    status_str = str(status or "ativa").strip().lower()
+    color_map = {
+        "ativa": "#22c55e",
+        "cancelada": "#ef4444",
+        "concluída": "#3b82f6",
+        "concluida": "#3b82f6"
+    }
+    color = color_map.get(status_str, "#6b7280")
+    return f"<span style='background-color:{color}; color:white; padding:2px 10px; border-radius:12px; font-size:0.8rem; font-weight:600;'>{status_str.capitalize()}</span>"
 
 # 13. Configuração da página chamada uma única vez no topo
 st.set_page_config(
@@ -30,13 +69,21 @@ def apply_background():
         section[data-testid="stSidebar"] {
             border-right: 1px solid rgba(34, 197, 94, 0.45) !important;
         }
+        .plate-box {
+            font-family: monospace;
+            background-color: #111827;
+            color: #22c55e;
+            padding: 4px 8px;
+            border: 1px solid #22c55e;
+            border-radius: 4px;
+            font-weight: bold;
+            display: inline-block;
+        }
     </style>
     """, unsafe_allow_html=True)
 
-# Aplica o fundo temático de estacionamento
 apply_background()
 
-# 15. Centralização de textos de interface
 TEXTS = {
     "app_title": "Estacionamento Smart",
     "app_subtitle": "Sistema Inteligente de Gestão de Vagas",
@@ -54,10 +101,6 @@ TEXTS = {
     "logout_btn": "Sair"
 }
 
-# Feature flag para telas futuras (ocultas por padrão)
-TELAS_DISPONIVEIS = True
-
-# Recupera URLs base do Xano do ambiente
 XANO_API_URL = os.getenv("XANO_API_URL")
 XANO_VEHICLES_URL = os.getenv("XANO_VEHICLES_URL")
 XANO_PARKING_URL = os.getenv("XANO_PARKING_URL")
@@ -69,6 +112,8 @@ def init_session():
         st.session_state.user_role = None
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
+    if "nav_index" not in st.session_state:
+        st.session_state.nav_index = 0
 
 init_session()
 
@@ -107,8 +152,7 @@ def api_request(method, endpoint, data=None, auth=True, base_url=None):
                 return response.json(), None
             except Exception:
                 return {"raw": response.text}, None
-        elif response.status_code == 401 or response.status_code == 403:
-            # Se token expirou, limpa sessão para forçar novo login
+        elif response.status_code in [401, 403]:
             if auth:
                 st.session_state.token = None
                 st.session_state.user_role = None
@@ -122,19 +166,15 @@ def api_request(method, endpoint, data=None, auth=True, base_url=None):
             try:
                 err_json = response.json()
                 msg = err_json.get("message", "")
-                if msg:
-                    err_msg = msg
-                else:
-                    err_msg = str(err_json)
+                err_msg = msg if msg else str(err_json)
             except:
                 err_msg = response.text
             return None, f"Erro ({response.status_code}): {err_msg}"
     except Exception as e:
         return None, f"Erro de conexão: {str(e)}"
 
-# --- TELA DE LOGIN / CADASTRO (C) ---
+# --- TELA DE LOGIN / CADASTRO (C) (Original) ---
 def auth_page():
-    # Variáveis de cor e opacidade ajustáveis
     parking_bg = "#030504"
     line_color = "rgba(34, 197, 94, 0.40)"
     label_color = "rgba(34, 197, 94, 0.55)"
@@ -177,7 +217,7 @@ def auth_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
-        st.markdown(f"## :material/local_parking: {TEXTS['app_title']}")
+        st.markdown(f"## :material/directions_car: {TEXTS['app_title']}")
         st.caption(TEXTS['app_subtitle'])
         st.markdown("</div>", unsafe_allow_html=True)
         st.write("")
@@ -260,7 +300,57 @@ def auth_page():
 def fetch_user_vehicles():
     return api_request("GET", "/vehicle", base_url=XANO_VEHICLES_URL)
 
-# --- TELA MEUS VEÍCULOS (D) ---
+@st.dialog("Editar Veículo")
+def edit_vehicle_dialog(v_id, v_plate, v_brand, v_model, v_color, v_year, v_type):
+    ed_plate = st.text_input("Placa", value=v_plate).strip().upper()
+    ed_brand = st.text_input("Marca", value=v_brand).strip()
+    ed_model = st.text_input("Modelo", value=v_model).strip()
+    ed_color = st.text_input("Cor", value=v_color).strip()
+    current_year = datetime.now().year
+    ed_year = st.number_input("Ano", min_value=1980, max_value=current_year + 1, value=int(v_year) if v_year else current_year, step=1)
+    ed_type = st.selectbox("Tipo", ["carro", "moto", "pcd"], index=["carro", "moto", "pcd"].index(v_type) if v_type in ["carro", "moto", "pcd"] else 0)
+    
+    st.write("")
+    if st.button("Salvar Alterações", type="primary", use_container_width=True):
+        plate_clean = ed_plate.replace("-", "").strip()
+        pattern_old = r"^[A-Z]{3}[0-9]{4}$"
+        pattern_mercosul = r"^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$"
+        
+        if not plate_clean or not ed_brand or not ed_model or not ed_color:
+            st.error("Preencha todos os campos obrigatórios.")
+        elif not (re.match(pattern_old, plate_clean) or re.match(pattern_mercosul, plate_clean)):
+            st.error("Formato de placa inválido (use ABC1234 ou ABC1D23).")
+        else:
+            payload = {
+                "id": v_id,
+                "plate": ed_plate,
+                "brand": ed_brand,
+                "model": ed_model,
+                "color": ed_color,
+                "year": int(ed_year),
+                "type": ed_type
+            }
+            _, err_up = api_request("PUT", f"/vehicle/{v_id}", payload, base_url=XANO_VEHICLES_URL)
+            if err_up:
+                st.error(err_up)
+            else:
+                st.toast("Veículo atualizado com sucesso!", icon=":material/check_circle:")
+                st.rerun()
+
+@st.dialog("Confirmar Exclusão")
+def confirm_delete_vehicle_dialog(v_id):
+    st.warning("Tem certeza que deseja excluir este veículo? Esta ação não pode ser desfeita.")
+    col_y, col_n = st.columns(2)
+    if col_y.button("Sim, Excluir", type="primary", use_container_width=True):
+        _, err_del = api_request("DELETE", f"/vehicle/{v_id}", base_url=XANO_VEHICLES_URL)
+        if err_del:
+            st.error(err_del)
+        else:
+            st.toast("Veículo excluído com sucesso!", icon=":material/delete:")
+            st.rerun()
+    if col_n.button("Cancelar", use_container_width=True):
+        st.rerun()
+
 def page_my_vehicles():
     st.title("Meus Veículos")
     
@@ -306,6 +396,8 @@ def page_my_vehicles():
                     st.error("Preencha todos os campos obrigatórios (Placa, Marca, Modelo, Cor).")
                 elif not (re.match(pattern_old, plate_clean) or re.match(pattern_mercosul, plate_clean)):
                     st.error("Formato de placa inválido. Use o formato antigo (ABC-1234) ou Mercosul (ABC1D23).")
+                elif year < 1980 or year > current_year + 1:
+                    st.error(f"Ano inválido. Deve estar entre 1980 e {current_year + 1}.")
                 else:
                     with st.spinner("Cadastrando veículo..."):
                         payload = {
@@ -335,7 +427,9 @@ def page_my_vehicles():
         else:
             st.error(err)
     elif not vehicles:
-        st.info("Você ainda não cadastrou veículos. Use o formulário acima para adicionar o primeiro.")
+        st.info("Você ainda não cadastrou veículos.")
+        if st.button("Cadastrar Primeiro Veículo", type="primary"):
+            st.rerun()
     else:
         for v in vehicles:
             if 'type' in v and v['type']:
@@ -350,12 +444,11 @@ def page_my_vehicles():
         
         with st.container(border=True):
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total", total_v)
-            m2.metric("Carros", total_carro)
-            m3.metric("Motos", total_moto)
-            m4.metric("PCD", total_pcd)
+            m1.metric("Total", total_v, delta=None, border=True)
+            m2.metric("Carros", total_carro, delta=None, border=True)
+            m3.metric("Motos", total_moto, delta=None, border=True)
+            m4.metric("PCD", total_pcd, delta=None, border=True)
         
-        # Linha de filtros e ordenação rápida
         col_s1, col_s2 = st.columns([2, 1])
         with col_s1:
             search_query = st.text_input(":material/search: Buscar", placeholder="Digite placa, marca ou modelo...").strip().lower()
@@ -396,39 +489,18 @@ def page_my_vehicles():
                 
                 with st.container(border=True):
                     st.markdown(f"### {icon} **{v_brand.title()} {v_model.title()}**")
-                    st.code(f"{v_plate}", language=None)
+                    st.markdown(f"<div class='plate-box'>{v_plate}</div>", unsafe_allow_html=True)
                     st.markdown(f"Cor: {v_color.title()} &nbsp;|&nbsp; Ano: {v_year} &nbsp;|&nbsp; {type_badge}", unsafe_allow_html=True)
                     st.write("")
                     
-                    confirm_key = f"confirm_del_{v_id}"
-                    if confirm_key not in st.session_state:
-                        st.session_state[confirm_key] = False
-                        
-                    if not st.session_state[confirm_key]:
-                        if st.button("Excluir", key=f"btn_del_{v_id}"):
-                            st.session_state[confirm_key] = True
-                            st.rerun()
-                    else:
-                        st.warning("Tem certeza?")
-                        col_yes, col_no = st.columns(2)
-                        if col_yes.button("Sim", key=f"yes_del_{v_id}"):
-                            with st.spinner("Excluindo veículo..."):
-                                _, err_del = api_request("DELETE", f"/vehicle/{v_id}", base_url=XANO_VEHICLES_URL)
-                                if err_del:
-                                    if "404" in err_del:
-                                        st.warning("⚠️ O endpoint DELETE /vehicle/{id} ainda não existe no Xano.")
-                                    else:
-                                        st.error(err_del)
-                                else:
-                                    st.toast("Veículo excluído com sucesso!", icon=":material/delete:")
-                                    st.session_state[confirm_key] = False
-                                    st.cache_data.clear() if hasattr(st, "cache_data") else None
-                                    st.rerun()
-                        if col_no.button("Não", key=f"no_del_{v_id}"):
-                            st.session_state[confirm_key] = False
-                            st.rerun()
+                    col_act1, col_act2 = st.columns(2)
+                    with col_act1:
+                        if st.button("Editar", key=f"btn_edit_veh_{v_id}", use_container_width=True):
+                            edit_vehicle_dialog(v_id, v_plate, v_brand, v_model, v_color, v_year, v_type_val)
+                    with col_act2:
+                        if st.button("Excluir", key=f"btn_del_veh_{v_id}", use_container_width=True):
+                            confirm_delete_vehicle_dialog(v_id)
 
-# --- TELAS DE RESERVAS ---
 def page_consult_reservations():
     st.header("🅿️ Consultar & Reservar Vagas")
     
@@ -456,97 +528,315 @@ def page_consult_reservations():
     selected_veh_label = st.selectbox("Selecione o Veículo", list(veh_options.keys()))
     selected_veh = veh_options[selected_veh_label]
 
+    now = datetime.now()
+    default_end = now + timedelta(hours=1)
+
     col_d1, col_d2 = st.columns(2)
     with col_d1:
-        start_date = st.date_input("Data de Início", value=datetime.now().date())
-        start_time = st.time_input("Horário de Início", value=datetime.now().time())
+        start_date = st.date_input("Data de Início", value=now.date())
+        start_time = st.time_input("Horário de Início", value=now.time())
     with col_d2:
-        end_date = st.date_input("Data de Término", value=datetime.now().date())
-        end_time = st.time_input("Horário de Término", value=datetime.now().time())
+        end_date = st.date_input("Data de Término", value=default_end.date())
+        end_time = st.time_input("Horário de Término", value=default_end.time())
 
-    start_dt = datetime.combine(start_date, start_time).isoformat()
-    end_dt = datetime.combine(end_date, end_time).isoformat()
+    start_dt = datetime.combine(start_date, start_time)
+    end_dt = datetime.combine(end_date, end_time)
+
+    # Fetch rates for estimation
+    rates, _ = api_request("GET", f"/tarifa?location_id={selected_loc_id}")
+    rate_val = 10.0
+    if rates:
+        match_rate = next((r for r in rates if r.get('tipo_vaga') == selected_veh.get('type')), None)
+        if match_rate:
+            rate_val = float(match_rate.get('valor_hora', 10.0))
+
+    duration_hours = max(0.5, (end_dt - start_dt).total_seconds() / 3600.0)
+    estimated_price = duration_hours * rate_val
+
+    st.info(f"💰 **Preço estimado:** R$ {estimated_price:.2f} (Base: R$ {rate_val:.2f}/h para {duration_hours:.1f}h)")
 
     if "search_vagas" not in st.session_state:
         st.session_state.search_vagas = None
 
     if st.button("Consultar Disponibilidade", type="primary"):
-        with st.spinner("Buscando vagas disponíveis..."):
-            avail_url = f"/reservation/availability?location_id={selected_loc_id}&vehicle_id={selected_veh.get('id')}&start_time={start_dt}&end_time={end_dt}"
-            vagas, err_avail = api_request("GET", avail_url)
-            if err_avail:
-                st.error(err_avail)
-                st.session_state.search_vagas = None
-            elif not vagas:
-                st.info("Nenhuma vaga disponível para este período e tipo de veículo.")
-                st.session_state.search_vagas = None
-            else:
-                st.session_state.search_vagas = {
-                    "vagas": vagas,
-                    "location_id": selected_loc_id,
-                    "vehicle_id": selected_veh.get("id"),
-                    "start_time": start_dt,
-                    "end_time": end_dt
-                }
+        if start_dt < datetime.now() - timedelta(minutes=1):
+            st.error("O horário de início não pode ser no passado.")
+        elif end_dt <= start_dt:
+            st.error("O horário de término deve ser posterior ao horário de início.")
+        else:
+            with st.spinner("Buscando vagas disponíveis..."):
+                start_iso = start_dt.isoformat()
+                end_iso = end_dt.isoformat()
+                avail_url = f"/reservation/availability?location_id={selected_loc_id}&vehicle_id={selected_veh.get('id')}&start_time={start_iso}&end_time={end_iso}"
+                vagas, err_avail = api_request("GET", avail_url)
+                if err_avail:
+                    st.error(err_avail)
+                    st.session_state.search_vagas = None
+                elif not vagas:
+                    st.info("Nenhuma vaga disponível para este período e tipo de veículo.")
+                    st.session_state.search_vagas = None
+                else:
+                    st.session_state.search_vagas = {
+                        "vagas": vagas,
+                        "location_id": selected_loc_id,
+                        "vehicle_id": selected_veh.get("id"),
+                        "start_time": start_iso,
+                        "end_time": end_iso
+                    }
 
     if st.session_state.search_vagas:
         search_data = st.session_state.search_vagas
         vagas = search_data.get("vagas", [])
         st.success(f"{len(vagas)} vaga(s) disponível(is)!")
-        for vaga in vagas:
-            col_v1, col_v2 = st.columns([3, 1])
-            with col_v1:
-                st.markdown(f"Vaga **{vaga.get('numero')}** (Tipo: `{vaga.get('tipo')}`)")
-            with col_v2:
-                if st.button("Reservar", key=f"book_vaga_{vaga.get('id')}"):
-                    payload = {
-                        "location_id": search_data["location_id"],
-                        "vaga_id": vaga.get("id"),
-                        "vehicle_id": search_data["vehicle_id"],
-                        "start_time": search_data["start_time"],
-                        "end_time": search_data["end_time"]
-                    }
-                    with st.spinner("Confirmando reserva..."):
-                        res_data, err_book = api_request("POST", "/reservation", payload)
-                        if err_book:
-                            st.error(f"Erro ao realizar reserva: {err_book}")
-                        elif not isinstance(res_data, dict) or not res_data.get("id"):
-                            st.error(f"Erro: A resposta da API não retornou o ID da reserva. Resposta recebida: {res_data}")
-                        else:
-                            st.session_state.success_message = f"Reserva #{res_data.get('id')} realizada com sucesso!"
-                            st.session_state.search_vagas = None
-                            st.session_state.nav_index = 2
-                            st.rerun()
+        
+        st.subheader("Grid de Vagas Disponíveis")
+        grid_cols = st.columns(4)
+        for idx, vaga in enumerate(vagas):
+            g_col = grid_cols[idx % 4]
+            with g_col:
+                with st.container(border=True):
+                    st.markdown(f"#### 🅿️ {vaga.get('numero')}")
+                    st.caption(f"Tipo: {vaga.get('tipo', '').upper()}")
+                    if st.button("Reservar", key=f"book_grid_{vaga.get('id')}", use_container_width=True):
+                        payload = {
+                            "location_id": search_data["location_id"],
+                            "vaga_id": vaga.get("id"),
+                            "vehicle_id": search_data["vehicle_id"],
+                            "start_time": search_data["start_time"],
+                            "end_time": search_data["end_time"]
+                        }
+                        with st.spinner("Confirmando reserva..."):
+                            res_data, err_book = api_request("POST", "/reservation", payload)
+                            if err_book:
+                                st.error(f"Erro ao realizar reserva: {err_book}")
+                            elif not isinstance(res_data, dict) or not res_data.get("id"):
+                                st.error(f"Erro: A resposta da API não retornou o ID da reserva. Resposta: {res_data}")
+                            else:
+                                res_id = res_data.get('id')
+                                st.session_state.success_message = f"Reserva #{res_id} realizada com sucesso!"
+                                st.session_state.last_created_res_id = res_id
+                                st.session_state.search_vagas = None
+                                st.session_state.nav_index = 2
+                                st.rerun()
+
+@st.dialog("🎟️ Ticket de Reserva")
+def view_ticket_dialog(res_id):
+    now_ts = datetime.now().timestamp()
+    cache_key = f"ticket_cache_{res_id}"
+    cache_time_key = f"ticket_cache_time_{res_id}"
+    
+    ticket_data = None
+    if cache_key in st.session_state and cache_time_key in st.session_state:
+        if now_ts - st.session_state[cache_time_key] < 60:
+            ticket_data = st.session_state[cache_key]
+            
+    if not ticket_data:
+        with st.spinner("Carregando detalhes do ticket..."):
+            data, err = api_request("GET", f"/reservation/{res_id}/ticket")
+            if err:
+                reservations, r_err = api_request("GET", "/reservation")
+                if not r_err and reservations:
+                    res_item = next((r for r in reservations if r.get('id') == res_id), None)
+                    if res_item:
+                        ticket_data = {
+                            "ticket_code": res_item.get('ticket_code', f"RES{res_id:05d}"),
+                            "client_name": st.session_state.get('user_email', 'Cliente'),
+                            "vehicle_plate": res_item.get('vehicle_plate', res_item.get('vehicle_id', '-')),
+                            "location_name": res_item.get('location_name', f"Local #{res_item.get('location_id', 1)}"),
+                            "vaga_numero": res_item.get('vaga_numero', f"#{res_item.get('vaga_id', 1)}"),
+                            "start_time": res_item.get('start_time'),
+                            "end_time": res_item.get('end_time'),
+                            "hourly_rate": res_item.get('hourly_rate', 10.0),
+                            "total_price": res_item.get('price', 0.0),
+                            "status": res_item.get('status', 'ativa'),
+                            "issued_at": datetime.now().isoformat()
+                        }
+                if not ticket_data:
+                    st.error(err)
+                    if st.button("Fechar"):
+                        st.rerun()
+                    return
+            else:
+                ticket_data = data
+                
+            st.session_state[cache_key] = ticket_data
+            st.session_state[cache_time_key] = now_ts
+
+    t_code = ticket_data.get('ticket_code', '-')
+    client = ticket_data.get('client_name', '-')
+    plate = ticket_data.get('vehicle_plate', '-')
+    loc = ticket_data.get('location_name', '-')
+    vaga = ticket_data.get('vaga_numero', '-')
+    start_fmt = format_timestamp(ticket_data.get('start_time'))
+    end_fmt = format_timestamp(ticket_data.get('end_time'))
+    price = ticket_data.get('total_price', ticket_data.get('price', 0.0))
+    status = ticket_data.get('status', 'ativa')
+    issued_at_fmt = format_timestamp(ticket_data.get('issued_at', datetime.now().isoformat()))
+
+    st.markdown(f"""
+    <div style="border: 2px dashed #22c55e; padding: 20px; border-radius: 8px; background: #0b130e; color: #f9fafb;">
+        <div style="text-align: center; border-bottom: 1px solid rgba(34,197,94,0.3); padding-bottom: 10px; margin-bottom: 15px;">
+            <h3 style="margin: 0; color: #22c55e;">Estacionamento Smart</h3>
+            <p style="margin: 5px 0 0 0; font-size: 0.85rem; color: #9ca3af;">Código do Ticket</p>
+            <div style="font-size: 26px; font-weight: bold; color: #22c55e; font-family: monospace; letter-spacing: 2px;">{html.escape(str(t_code))}</div>
+        </div>
+        <div style="font-size: 0.95rem; line-height: 1.6;">
+            <p style="margin: 4px 0;"><strong>👤 Cliente:</strong> {html.escape(str(client))}</p>
+            <p style="margin: 4px 0;"><strong>🚗 Veículo (Placa):</strong> <span class="plate-box">{html.escape(str(plate))}</span></p>
+            <p style="margin: 4px 0;"><strong>📍 Local:</strong> {html.escape(str(loc))}</p>
+            <p style="margin: 4px 0;"><strong>🅿️ Vaga:</strong> {html.escape(str(vaga))}</p>
+            <p style="margin: 4px 0;"><strong>🕒 Início:</strong> {start_fmt}</p>
+            <p style="margin: 4px 0;"><strong>🕒 Término:</strong> {end_fmt}</p>
+            <p style="margin: 4px 0;"><strong>💵 Preço Total:</strong> R$ {price:.2f}</p>
+            <p style="margin: 4px 0;"><strong>📊 Status:</strong> {render_status_badge(status)}</p>
+        </div>
+        <div style="text-align: center; font-size: 11px; color: #9ca3af; margin-top: 15px; border-top: 1px solid rgba(34,197,94,0.3); padding-top: 8px;">
+            Emitido em: {issued_at_fmt}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
+    html_download_content = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Ticket de Reserva - {html.escape(str(t_code))}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; color: #111; }}
+        .ticket {{ border: 2px dashed #22c55e; padding: 20px; border-radius: 8px; max-width: 600px; margin: auto; background: #f9fafb; }}
+        .header {{ text-align: center; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }}
+        .code {{ font-size: 24px; font-weight: bold; color: #22c55e; font-family: monospace; }}
+        .details {{ margin-bottom: 15px; line-height: 1.6; }}
+        .footer {{ text-align: center; font-size: 12px; color: #666; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }}
+        @media print {{
+            body {{ margin: 0; }}
+            .ticket {{ border: 2px solid #000; box-shadow: none; width: 100%; max-width: none; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="ticket">
+        <div class="header">
+            <h2>Estacionamento Smart - Ticket de Reserva</h2>
+            <div class="code">{html.escape(str(t_code))}</div>
+        </div>
+        <div class="details">
+            <p><strong>Cliente:</strong> {html.escape(str(client))}</p>
+            <p><strong>Veículo (Placa):</strong> {html.escape(str(plate))}</p>
+            <p><strong>Local:</strong> {html.escape(str(loc))}</p>
+            <p><strong>Vaga:</strong> {html.escape(str(vaga))}</p>
+            <p><strong>Início:</strong> {start_fmt}</p>
+            <p><strong>Término:</strong> {end_fmt}</p>
+            <p><strong>Preço Total:</strong> R$ {price:.2f}</p>
+            <p><strong>Status:</strong> {html.escape(str(status))}</p>
+        </div>
+        <div class="footer">
+            <p>Emitido em: {issued_at_fmt}</p>
+        </div>
+    </div>
+</body>
+</html>"""
+
+    st.download_button(
+        label="📥 Baixar ticket",
+        data=html_download_content,
+        file_name=f"ticket-{t_code}.html",
+        mime="text/html",
+        use_container_width=True
+    )
+
+@st.dialog("Confirmar Cancelamento")
+def confirm_cancel_dialog(res_id):
+    st.warning(f"Tem certeza que deseja cancelar a reserva #{res_id}?")
+    col_y, col_n = st.columns(2)
+    if col_y.button("Sim, Cancelar", type="primary", use_container_width=True):
+        _, err_del = api_request("DELETE", f"/reservation/{res_id}")
+        if err_del:
+            st.error(err_del)
+        else:
+            cache_key = f"ticket_cache_{res_id}"
+            cache_time_key = f"ticket_cache_time_{res_id}"
+            if cache_key in st.session_state:
+                del st.session_state[cache_key]
+            if cache_time_key in st.session_state:
+                del st.session_state[cache_time_key]
+            st.toast("Reserva cancelada com sucesso!", icon=":material/check_circle:")
+            st.rerun()
+    if col_n.button("Voltar", use_container_width=True):
+        st.rerun()
 
 def page_my_reservations():
     st.header(":material/receipt_long: Minhas Reservas")
 
     if "success_message" in st.session_state and st.session_state.success_message:
         st.success(st.session_state.success_message)
+        if "last_created_res_id" in st.session_state and st.session_state.last_created_res_id:
+            if st.button("🎟️ Ver Ticket da Nova Reserva", type="primary"):
+                view_ticket_dialog(st.session_state.last_created_res_id)
         st.session_state.success_message = None
 
     reservations, err = api_request("GET", "/reservation")
     if err:
         st.error(err)
     elif not reservations:
-        st.info("Você não possui reservas cadastradas.")
+        st.info("Você ainda não possui reservas cadastradas.")
+        if st.button("Fazer Primeira Reserva", type="primary"):
+            st.session_state.nav_index = 1
+            st.rerun()
     else:
-        for r in reservations:
-            with st.container(border=True):
-                col_r1, col_r2 = st.columns([3, 1])
-                with col_r1:
-                    st.markdown(f"**Reserva #{r.get('id')}** - Status: `{r.get('status')}`")
-                    st.markdown(f"Início: `{r.get('start_time')}` | Término: `{r.get('end_time')}`")
-                    st.markdown(f"Preço: R$ {r.get('price', 0):.2f}")
-                with col_r2:
-                    if r.get('status') == 'ativa':
-                        if st.button("Cancelar", key=f"cancel_res_{r.get('id')}"):
-                            _, err_del = api_request("DELETE", f"/reservation/{r.get('id')}")
-                            if err_del:
-                                st.error(err_del)
-                            else:
-                                st.toast("Reserva cancelada com sucesso!", icon=":material/check_circle:")
-                                st.rerun()
+        reservations.sort(key=lambda x: x.get('id', 0), reverse=True)
+        
+        active_res = [r for r in reservations if str(r.get('status', '')).strip().lower() == 'ativa']
+        history_res = [r for r in reservations if str(r.get('status', '')).strip().lower() != 'ativa']
+
+        tab_active, tab_history = st.tabs([f"Ativas ({len(active_res)})", f"Histórico ({len(history_res)})"])
+
+        with tab_active:
+            if not active_res:
+                st.info("Nenhuma reserva ativa no momento.")
+            else:
+                for r in active_res:
+                    with st.container(border=True):
+                        col_r1, col_r2 = st.columns([3, 1])
+                        with col_r1:
+                            badge = render_status_badge(r.get('status'))
+                            st.markdown(f"**Reserva #{r.get('id')}** &nbsp;&nbsp; {badge}", unsafe_allow_html=True)
+                            start_fmt = format_timestamp(r.get('start_time'))
+                            end_fmt = format_timestamp(r.get('end_time'))
+                            st.markdown(f"🕒 **Início:** {start_fmt} &nbsp;|&nbsp; **Término:** {end_fmt}")
+                            st.markdown(f"📍 **Local:** {r.get('location_name', r.get('location_id', '-'))} &nbsp;|&nbsp; 🅿️ **Vaga:** {r.get('vaga_numero', r.get('vaga_id', '-'))} &nbsp;|&nbsp; 🚗 **Veículo:** {r.get('vehicle_model', r.get('vehicle_id', '-'))}")
+                            st.markdown(f"💵 **Preço:** R$ {r.get('price', 0):.2f}")
+                        with col_r2:
+                            st.write("")
+                            if st.button("🎟️ Ver Ticket", key=f"ticket_res_{r.get('id')}", use_container_width=True):
+                                view_ticket_dialog(r.get('id'))
+                            if st.button("Cancelar", key=f"cancel_res_{r.get('id')}", use_container_width=True):
+                                confirm_cancel_dialog(r.get('id'))
+
+        with tab_history:
+            if not history_res:
+                st.info("Nenhum histórico de reservas.")
+            else:
+                for r in history_res:
+                    with st.container(border=True):
+                        col_h1, col_h2 = st.columns([3, 1])
+                        with col_h1:
+                            badge = render_status_badge(r.get('status'))
+                            st.markdown(f"**Reserva #{r.get('id')}** &nbsp;&nbsp; {badge}", unsafe_allow_html=True)
+                            start_fmt = format_timestamp(r.get('start_time'))
+                            end_fmt = format_timestamp(r.get('end_time'))
+                            st.markdown(f"🕒 **Início:** {start_fmt} &nbsp;|&nbsp; **Término:** {end_fmt}")
+                            st.markdown(f"📍 **Local ID:** {r.get('location_id')} &nbsp;|&nbsp; 🅿️ **Vaga ID:** {r.get('vaga_id')} &nbsp;|&nbsp; 🚗 **Veículo ID:** {r.get('vehicle_id')}")
+                            st.markdown(f"💵 **Preço:** R$ {r.get('price', 0):.2f}")
+                        with col_h2:
+                            st.write("")
+                            if st.button("🎟️ Ver Ticket", key=f"ticket_hist_{r.get('id')}", use_container_width=True):
+                                view_ticket_dialog(r.get('id'))
+                        end_fmt = format_timestamp(r.get('end_time'))
+                        st.markdown(f"🕒 **Início:** {start_fmt} &nbsp;|&nbsp; **Término:** {end_fmt}")
+                        st.markdown(f"📍 **Local ID:** {r.get('location_id')} &nbsp;|&nbsp; 🅿️ **Vaga ID:** {r.get('vaga_id')} &nbsp;|&nbsp; 🚗 **Veículo ID:** {r.get('vehicle_id')}")
+                        st.markdown(f"💵 **Preço:** R$ {r.get('price', 0):.2f}")
 
 @st.dialog("Editar Local")
 def edit_location_dialog(loc_id, loc_name, loc_address, loc_desc):
@@ -771,24 +1061,37 @@ def page_admin_reservations():
     elif not reservations:
         st.info("Nenhuma reserva cadastrada no sistema.")
     else:
+        reservations.sort(key=lambda x: x.get('id', 0), reverse=True)
         for r in reservations:
             with st.container(border=True):
                 col_a1, col_a2 = st.columns([3, 1])
                 with col_a1:
-                    st.markdown(f"**Reserva #{r.get('id')}** (Usuário ID: {r.get('user_id')}) - Status: `{r.get('status')}`")
-                    st.markdown(f"Local: {r.get('location_id')} | Vaga: {r.get('vaga_id')} | Veículo: {r.get('vehicle_id')}")
-                    st.markdown(f"Início: `{r.get('start_time')}` | Término: `{r.get('end_time')}` | R$ {r.get('price', 0):.2f}")
+                    badge = render_status_badge(r.get('status'))
+                    st.markdown(f"**Reserva #{r.get('id')}** (Usuário ID: {r.get('user_id')}) &nbsp;&nbsp; {badge}", unsafe_allow_html=True)
+                    start_fmt = format_timestamp(r.get('start_time'))
+                    end_fmt = format_timestamp(r.get('end_time'))
+                    st.markdown(f"📍 **Local:** {r.get('location_id')} | 🅿️ **Vaga:** {r.get('vaga_id')} | 🚗 **Veículo:** {r.get('vehicle_id')}")
+                    st.markdown(f"🕒 **Início:** {start_fmt} | **Término:** {end_fmt} | **Preço:** R$ {r.get('price', 0):.2f}")
                 with col_a2:
-                    if r.get('status') == 'ativa':
-                        if st.button("Cancelar Admin", key=f"admin_cancel_res_{r.get('id')}"):
+                    st.write("")
+                    if st.button("🎟️ Ver Ticket", key=f"admin_ticket_res_{r.get('id')}", use_container_width=True):
+                        view_ticket_dialog(r.get('id'))
+                    if str(r.get('status')).lower() == 'ativa':
+                        if st.button("Cancelar Admin", key=f"admin_cancel_res_{r.get('id')}", use_container_width=True):
                             _, err_del = api_request("DELETE", f"/admin/reservation/{r.get('id')}")
                             if err_del:
                                 st.error(err_del)
                             else:
+                                cache_key = f"ticket_cache_{r.get('id')}"
+                                cache_time_key = f"ticket_cache_time_{r.get('id')}"
+                                if cache_key in st.session_state:
+                                    del st.session_state[cache_key]
+                                if cache_time_key in st.session_state:
+                                    del st.session_state[cache_time_key]
                                 st.toast("Reserva cancelada pelo administrador!", icon=":material/check_circle:")
                                 st.rerun()
 
-# --- CONTROLE DE FLUXO PRINCIPAL E SIDEBAR (A, B) ---
+# --- CONTROLE DE FLUXO PRINCIPAL E SIDEBAR ---
 if not st.session_state.token:
     auth_page()
 else:
@@ -818,7 +1121,7 @@ else:
     if role == "admin":
         menu_options = ["Locais & Vagas", "Tarifas", "Meus Veículos", "Todas as Reservas"]
     else:
-        menu_options = ["Meus Veículos", "Consultar & Reservar", "Minhas Reservas"]
+        menu_options = ["Meus Veículos", "Reservar", "Minhas Reservas"]
             
     if len(menu_options) > 1:
         st.sidebar.markdown("### Navegação")
@@ -835,7 +1138,7 @@ else:
                 ":material/domain: Locais & Vagas" if x == "Locais & Vagas" else
                 ":material/payments: Tarifas" if x == "Tarifas" else
                 ":material/directions_car: Meus Veículos" if "Veículos" in x else
-                ":material/directions_car: Consultar & Reservar" if x == "Consultar & Reservar" else
+                ":material/local_parking: Reservar" if x == "Reservar" else
                 ":material/receipt_long: Minhas Reservas" if x == "Minhas Reservas" else
                 ":material/bar_chart: Todas as Reservas" if x == "Todas as Reservas" else
                 f":material/menu: {x}"
@@ -855,9 +1158,9 @@ else:
         st.session_state.user_email = None
         st.rerun()
 
-    if selected_page == "Meus Veículos" or selected_page == "🚘 Meus Veículos":
+    if selected_page == "Meus Veículos":
         page_my_vehicles()
-    elif selected_page == "Consultar & Reservar":
+    elif selected_page == "Reservar":
         page_consult_reservations()
     elif selected_page == "Minhas Reservas":
         page_my_reservations()
