@@ -5,6 +5,7 @@ import re
 import html
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from ui.theme import apply_theme, render_status_badge, render_metric_card, render_plate, render_empty_state
 
 try:
     from zoneinfo import ZoneInfo
@@ -37,17 +38,6 @@ def format_timestamp(ts):
     except Exception:
         return str(ts)
 
-def render_status_badge(status):
-    status_str = str(status or "ativa").strip().lower()
-    color_map = {
-        "ativa": "#22c55e",
-        "cancelada": "#ef4444",
-        "concluída": "#3b82f6",
-        "concluida": "#3b82f6"
-    }
-    color = color_map.get(status_str, "#6b7280")
-    return f"<span style='background-color:{color}; color:white; padding:2px 10px; border-radius:12px; font-size:0.8rem; font-weight:600;'>{status_str.capitalize()}</span>"
-
 # 13. Configuração da página chamada uma única vez no topo
 st.set_page_config(
     page_title="Estacionamento Smart",
@@ -55,34 +45,7 @@ st.set_page_config(
     layout="wide"
 )
 
-def apply_background():
-    st.markdown("""
-    <style>
-        .stApp {
-            background-color: #030504 !important;
-        }
-        [data-testid="stVerticalBlockBorderWrapper"],
-        [data-testid="stExpander"] {
-            border: 1px solid rgba(34, 197, 94, 0.45) !important;
-            border-radius: 8px;
-        }
-        section[data-testid="stSidebar"] {
-            border-right: 1px solid rgba(34, 197, 94, 0.45) !important;
-        }
-        .plate-box {
-            font-family: monospace;
-            background-color: #111827;
-            color: #22c55e;
-            padding: 4px 8px;
-            border: 1px solid #22c55e;
-            border-radius: 4px;
-            font-weight: bold;
-            display: inline-block;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-apply_background()
+apply_theme()
 
 TEXTS = {
     "app_title": "Estacionamento Smart",
