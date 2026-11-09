@@ -27,18 +27,69 @@ def apply_theme():
             animation: fadeIn 0.4s ease-out;
         }
 
-        /* Expanded Sidebar Styling */
+        /* Expanded Sidebar & Navigation Styling */
         section[data-testid="stSidebar"] {
             background-color: #090D0C !important;
             border-right: 1px solid rgba(16, 185, 129, 0.25) !important;
             min-width: 300px !important;
             width: 300px !important;
         }
+        section[data-testid="stSidebar"] > div {
+            height: 100% !important;
+        }
         section[data-testid="stSidebar"] .block-container {
             background-color: #090D0C !important;
             padding-left: 1.5rem !important;
             padding-right: 1.5rem !important;
-            padding-top: 2rem !important;
+            padding-top: 1.5rem !important;
+            padding-bottom: 1.5rem !important;
+            display: flex !important;
+            flex-direction: column !important;
+            height: 100% !important;
+            box-sizing: border-box !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+            display: flex !important;
+            flex-direction: column !important;
+            flex: 1 !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:last-child {
+            margin-top: auto !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stDivider"],
+        section[data-testid="stSidebar"] hr {
+            margin: 0.6rem 0 !important;
+        }
+        section[data-testid="stSidebar"] h3 {
+            font-size: 1.15rem !important;
+            margin-top: 0.2rem !important;
+            margin-bottom: 0.4rem !important;
+            color: #F9FAFB !important;
+            letter-spacing: 0.3px !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] {
+            gap: 0.35rem !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label {
+            background-color: transparent !important;
+            border-radius: 8px !important;
+            padding: 0.6rem 0.8rem !important;
+            transition: all 0.2s ease !important;
+            cursor: pointer !important;
+            border: 1px solid transparent !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+            background-color: rgba(34, 197, 94, 0.08) !important;
+            border-color: rgba(34, 197, 94, 0.15) !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+            background-color: rgba(34, 197, 94, 0.15) !important;
+            border-color: rgba(34, 197, 94, 0.35) !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label p,
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label span {
+            font-size: 1.08rem !important;
+            font-weight: 500 !important;
         }
 
         /* Cards, Containers & Expanders with smooth hover lift */
