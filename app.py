@@ -596,37 +596,26 @@ def view_ticket_dialog(res_id):
     if not ticket_data:
         with st.spinner("Carregando detalhes do ticket..."):
             data, err = api_request("GET", f"/reservation/{res_id}/ticket")
-            if err:
-                reservations, r_err = api_request("GET", "/reservation")
-                if not r_err and reservations:
-                    res_item = next((r for r in reservations if r.get('id') == res_id), None)
-                    if res_item:
-                        ticket_data = {
-                            "ticket_code": res_item.get('ticket_code', f"RES{res_id:05d}"),
-                            "client_name": st.session_state.get('user_email', 'Cliente'),
-                            "vehicle_plate": res_item.get('vehicle_plate', res_item.get('vehicle_id', '-')),
-                            "location_name": res_item.get('location_name', f"Local #{res_item.get('location_id', 1)}"),
-                            "vaga_numero": res_item.get('vaga_numero', f"#{res_item.get('vaga_id', 1)}"),
-                            "start_time": res_item.get('start_time'),
-                            "end_time": res_item.get('end_time'),
-                            "hourly_rate": res_item.get('hourly_rate', 10.0),
-                            "total_price": res_item.get('price', 0.0),
-                            "status": res_item.get('status', 'ativa'),
-                            "issued_at": datetime.now().isoformat()
-                        }
-                if not ticket_data:
-                    st.error(err)
-                    if st.button("Fechar"):
-                        st.rerun()
-                    return
-            else:
-                ticket_data = data
-                
+            if err or not isinstance(data, dict):
+                st.error("Não foi possível carregar o ticket")
+                if st.button("Fechar"):
+                    st.rerun()
+                return
+            
+            required_fields = ["ticket_code", "status", "location_name", "vaga_numero", "vehicle_plate"]
+            if not all(data.get(f) for f in required_fields):
+                st.error("Não foi possível carregar o ticket")
+                if st.button("Fechar"):
+                    st.rerun()
+                return
+
+            ticket_data = data
             st.session_state[cache_key] = ticket_data
             st.session_state[cache_time_key] = now_ts
 
     t_code = ticket_data.get('ticket_code', '-')
-    client = ticket_data.get('client_name', '-')
+    raw_client = ticket_data.get('client_name', '-')
+    client = raw_client.split('@')[0] if '@' in raw_client else raw_client
     plate = ticket_data.get('vehicle_plate', '-')
     loc = ticket_data.get('location_name', '-')
     vaga = ticket_data.get('vaga_numero', '-')
@@ -709,6 +698,67 @@ def view_ticket_dialog(res_id):
         use_container_width=True
     )
 
+def parse_timestamp_to_datetime(ts):
+    if not ts:
+        return None
+    try:
+        val = float(ts)
+        if val > 1e11:
+            val = val / 1000.0
+        if ZoneInfo:
+            try:
+                return datetime.fromtimestamp(val, tz=ZoneInfo("America/Sao_Paulo"))
+            except Exception:
+                pass
+        return datetime.fromtimestamp(val)
+    except Exception:
+        return None
+
+def calculate_reservation_status(raw_status, start_ts, end_ts):
+    if raw_status and str(raw_status).strip().lower() in ["cancelada", "cancelado"]:
+        return "Cancelado"
+    
+    start_dt = parse_timestamp_to_datetime(start_ts)
+    end_dt = parse_timestamp_to_datetime(end_ts)
+    
+    if ZoneInfo:
+        try:
+            agora = datetime.now(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            agora = datetime.now()
+    else:
+        agora = datetime.now()
+        
+    if not start_dt or not end_dt:
+        s = str(raw_status or "válido").strip().capitalize()
+        return s if s in ["Válido", "Em andamento", "Expirado", "Cancelado"] else "Válido"
+        
+    if agora < start_dt:
+        return "Válido"
+    elif start_dt <= agora < end_dt:
+        return "Em andamento"
+    else:
+        return "Expirado"
+
+def get_my_reservations_lookup_data():
+    now_ts = datetime.now().timestamp()
+    if "my_res_lookup_cache" in st.session_state and "my_res_lookup_time" in st.session_state:
+        if now_ts - st.session_state["my_res_lookup_time"] < 60:
+            return st.session_state["my_res_lookup_cache"]
+    
+    locations, _ = api_request("GET", "/location")
+    vagas, _ = api_request("GET", "/vaga")
+    vehicles, _ = fetch_user_vehicles()
+    
+    loc_map = {item["id"]: item for item in (locations or []) if isinstance(item, dict) and "id" in item}
+    vaga_map = {item["id"]: item for item in (vagas or []) if isinstance(item, dict) and "id" in item}
+    veh_map = {item["id"]: item for item in (vehicles or []) if isinstance(item, dict) and "id" in item}
+    
+    cache = {"loc_map": loc_map, "vaga_map": vaga_map, "veh_map": veh_map}
+    st.session_state["my_res_lookup_cache"] = cache
+    st.session_state["my_res_lookup_time"] = now_ts
+    return cache
+
 @st.dialog("Confirmar Cancelamento")
 def confirm_cancel_dialog(res_id):
     st.warning(f"Tem certeza que deseja cancelar a reserva #{res_id}?")
@@ -724,6 +774,8 @@ def confirm_cancel_dialog(res_id):
                 del st.session_state[cache_key]
             if cache_time_key in st.session_state:
                 del st.session_state[cache_time_key]
+            if "my_res_lookup_cache" in st.session_state:
+                del st.session_state["my_res_lookup_cache"]
             st.toast("Reserva cancelada com sucesso!", icon=":material/check_circle:")
             st.rerun()
     if col_n.button("Voltar", use_container_width=True):
@@ -748,12 +800,51 @@ def page_my_reservations():
             st.session_state.nav_index = 1
             st.rerun()
     else:
-        reservations.sort(key=lambda x: x.get('id', 0), reverse=True)
+        lookup = get_my_reservations_lookup_data()
         
-        active_res = [r for r in reservations if str(r.get('status', '')).strip().lower() == 'ativa']
-        history_res = [r for r in reservations if str(r.get('status', '')).strip().lower() != 'ativa']
+        processed_res = []
+        for r in reservations:
+            r_copy = dict(r)
+            calc_status = calculate_reservation_status(r.get('status'), r.get('start_time'), r.get('end_time'))
+            r_copy['calculated_status'] = calc_status
+            
+            loc_id = r.get('location_id')
+            loc_item = lookup["loc_map"].get(loc_id)
+            loc_name = loc_item.get('name') if loc_item else r.get('location_name', '—')
+            r_copy['resolved_location'] = loc_name if loc_name else '—'
+            
+            vaga_id = r.get('vaga_id')
+            vaga_item = lookup["vaga_map"].get(vaga_id)
+            vaga_num = vaga_item.get('numero', vaga_item.get('number')) if vaga_item else r.get('vaga_numero', '—')
+            r_copy['resolved_vaga'] = str(vaga_num) if vaga_num is not None else '—'
+            
+            veh_id = r.get('vehicle_id')
+            veh_item = lookup["veh_map"].get(veh_id)
+            if veh_item:
+                v_model = veh_item.get('model', '')
+                v_plate = veh_item.get('plate', '')
+                veh_str = f"{v_model} ({v_plate})".strip() if (v_model or v_plate) else '—'
+            else:
+                vm = r.get('vehicle_model', '')
+                vp = r.get('vehicle_plate', '')
+                veh_str = f"{vm} ({vp})".strip() if (vm or vp) else '—'
+            r_copy['resolved_vehicle'] = veh_str if veh_str else '—'
+            
+            processed_res.append(r_copy)
+
+        processed_res.sort(key=lambda x: x.get('id', 0), reverse=True)
+        
+        active_res = [r for r in processed_res if r['calculated_status'] in ["Válido", "Em andamento"]]
+        history_res = [r for r in processed_res if r['calculated_status'] in ["Expirado", "Cancelado"]]
 
         tab_active, tab_history = st.tabs([f"Ativas ({len(active_res)})", f"Histórico ({len(history_res)})"])
+
+        badge_color_map = {
+            "Válido": "blue",
+            "Em andamento": "green",
+            "Expirado": "gray",
+            "Cancelado": "red"
+        }
 
         with tab_active:
             if not active_res:
@@ -763,19 +854,22 @@ def page_my_reservations():
                     with st.container(border=True):
                         col_r1, col_r2 = st.columns([3, 1])
                         with col_r1:
-                            badge = render_status_badge(r.get('status'))
-                            st.markdown(f"**Reserva #{r.get('id')}** &nbsp;&nbsp; {badge}", unsafe_allow_html=True)
+                            stat = r['calculated_status']
+                            st.badge(stat, color=badge_color_map.get(stat, "blue"), icon=":material/info:")
+                            st.markdown(f"**Reserva #{r.get('id')}**")
                             start_fmt = format_timestamp(r.get('start_time'))
                             end_fmt = format_timestamp(r.get('end_time'))
-                            st.markdown(f"🕒 **Início:** {start_fmt} &nbsp;|&nbsp; **Término:** {end_fmt}")
-                            st.markdown(f"📍 **Local:** {r.get('location_name', r.get('location_id', '-'))} &nbsp;|&nbsp; 🅿️ **Vaga:** {r.get('vaga_numero', r.get('vaga_id', '-'))} &nbsp;|&nbsp; 🚗 **Veículo:** {r.get('vehicle_model', r.get('vehicle_id', '-'))}")
-                            st.markdown(f"💵 **Preço:** R$ {r.get('price', 0):.2f}")
+                            st.caption(f"🕒 Início: {start_fmt} | Término: {end_fmt}")
+                            st.text(f"Local: {r['resolved_location']} | Vaga: {r['resolved_vaga']} | Veículo: {r['resolved_vehicle']}")
+                            price = r.get('price', r.get('total_price', 0))
+                            st.caption(f"💵 Preço: R$ {price:.2f}")
                         with col_r2:
                             st.write("")
                             if st.button("🎟️ Ver Ticket", key=f"ticket_res_{r.get('id')}", use_container_width=True):
                                 view_ticket_dialog(r.get('id'))
-                            if st.button("Cancelar", key=f"cancel_res_{r.get('id')}", use_container_width=True):
-                                confirm_cancel_dialog(r.get('id'))
+                            if stat in ["Válido", "Em andamento"]:
+                                if st.button("Cancelar", key=f"cancel_res_{r.get('id')}", use_container_width=True):
+                                    confirm_cancel_dialog(r.get('id'))
 
         with tab_history:
             if not history_res:
@@ -785,21 +879,19 @@ def page_my_reservations():
                     with st.container(border=True):
                         col_h1, col_h2 = st.columns([3, 1])
                         with col_h1:
-                            badge = render_status_badge(r.get('status'))
-                            st.markdown(f"**Reserva #{r.get('id')}** &nbsp;&nbsp; {badge}", unsafe_allow_html=True)
+                            stat = r['calculated_status']
+                            st.badge(stat, color=badge_color_map.get(stat, "gray"), icon=":material/history:")
+                            st.markdown(f"**Reserva #{r.get('id')}**")
                             start_fmt = format_timestamp(r.get('start_time'))
                             end_fmt = format_timestamp(r.get('end_time'))
-                            st.markdown(f"🕒 **Início:** {start_fmt} &nbsp;|&nbsp; **Término:** {end_fmt}")
-                            st.markdown(f"📍 **Local ID:** {r.get('location_id')} &nbsp;|&nbsp; 🅿️ **Vaga ID:** {r.get('vaga_id')} &nbsp;|&nbsp; 🚗 **Veículo ID:** {r.get('vehicle_id')}")
-                            st.markdown(f"💵 **Preço:** R$ {r.get('price', 0):.2f}")
+                            st.caption(f"🕒 Início: {start_fmt} | Término: {end_fmt}")
+                            st.text(f"Local: {r['resolved_location']} | Vaga: {r['resolved_vaga']} | Veículo: {r['resolved_vehicle']}")
+                            price = r.get('price', r.get('total_price', 0))
+                            st.caption(f"💵 Preço: R$ {price:.2f}")
                         with col_h2:
                             st.write("")
                             if st.button("🎟️ Ver Ticket", key=f"ticket_hist_{r.get('id')}", use_container_width=True):
                                 view_ticket_dialog(r.get('id'))
-                        end_fmt = format_timestamp(r.get('end_time'))
-                        st.markdown(f"🕒 **Início:** {start_fmt} &nbsp;|&nbsp; **Término:** {end_fmt}")
-                        st.markdown(f"📍 **Local ID:** {r.get('location_id')} &nbsp;|&nbsp; 🅿️ **Vaga ID:** {r.get('vaga_id')} &nbsp;|&nbsp; 🚗 **Veículo ID:** {r.get('vehicle_id')}")
-                        st.markdown(f"💵 **Preço:** R$ {r.get('price', 0):.2f}")
 
 @st.dialog("Editar Local")
 def edit_location_dialog(loc_id, loc_name, loc_address, loc_desc):
