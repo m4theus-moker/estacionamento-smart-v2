@@ -464,6 +464,39 @@ def page_my_vehicles():
                         if st.button("Excluir", key=f"btn_del_veh_{v_id}", use_container_width=True):
                             confirm_delete_vehicle_dialog(v_id)
 
+def fetch_slot_map_cached_data(location_id, vehicle_id, start_time_str, end_time_str, force_refresh=False):
+    import time
+    cache_key = (location_id, vehicle_id, start_time_str, end_time_str)
+    if "slot_map_cache" not in st.session_state:
+        st.session_state.slot_map_cache = {}
+    
+    cached = st.session_state.slot_map_cache.get(cache_key)
+    now = time.time()
+    
+    if not force_refresh and cached and (now - cached.get("timestamp", 0) < 60):
+        return cached.get("slots"), cached.get("avail"), cached.get("reservations"), None
+        
+    slots, err_slots = api_request("GET", f"/vaga?location_id={location_id}")
+    if err_slots:
+        return None, None, None, err_slots
+        
+    avail_url = f"/reservation/availability?location_id={location_id}&vehicle_id={vehicle_id}&start_time={start_time_str}&end_time={end_time_str}"
+    avail, err_avail = api_request("GET", avail_url)
+    if err_avail:
+        return None, None, None, err_avail
+        
+    reservations, err_res = api_request("GET", "/reservation")
+    if err_res:
+        return None, None, None, err_res
+        
+    st.session_state.slot_map_cache[cache_key] = {
+        "timestamp": now,
+        "slots": slots,
+        "avail": avail,
+        "reservations": reservations
+    }
+    return slots, avail, reservations, None
+
 def page_consult_reservations():
     st.header("🅿️ Consultar & Reservar Vagas")
     
@@ -518,69 +551,94 @@ def page_consult_reservations():
 
     st.info(f"💰 **Preço estimado:** R$ {estimated_price:.2f} (Base: R$ {rate_val:.2f}/h para {duration_hours:.1f}h)")
 
-    if "search_vagas" not in st.session_state:
-        st.session_state.search_vagas = None
+    if "slot_map_consultation" not in st.session_state:
+        st.session_state.slot_map_consultation = {
+            "location_id": None,
+            "vehicle_id": None,
+            "start_time": None,
+            "end_time": None,
+            "slots": None,
+            "avail": None,
+            "reservations": None
+        }
 
-    if st.button("Consultar Disponibilidade", type="primary"):
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        consult_clicked = st.button("Consultar Disponibilidade", type="primary")
+    with col_btn2:
+        refresh_clicked = st.button("Atualizar", use_container_width=True)
+
+    if consult_clicked or refresh_clicked:
         if start_dt < datetime.now() - timedelta(minutes=1):
             st.error("O horário de início não pode ser no passado.")
         elif end_dt <= start_dt:
             st.error("O horário de término deve ser posterior ao horário de início.")
         else:
-            with st.spinner("Buscando vagas disponíveis..."):
+            with st.spinner("Buscando dados do mapa de vagas..."):
                 start_iso = start_dt.isoformat()
                 end_iso = end_dt.isoformat()
-                avail_url = f"/reservation/availability?location_id={selected_loc_id}&vehicle_id={selected_veh.get('id')}&start_time={start_iso}&end_time={end_iso}"
-                vagas, err_avail = api_request("GET", avail_url)
-                if err_avail:
-                    st.error(err_avail)
-                    st.session_state.search_vagas = None
-                elif not vagas:
-                    st.info("Nenhuma vaga disponível para este período e tipo de veículo.")
-                    st.session_state.search_vagas = None
+                slots, avail, reservations, err_msg = fetch_slot_map_cached_data(
+                    selected_loc_id, selected_veh.get("id"), start_iso, end_iso, force_refresh=refresh_clicked
+                )
+                if err_msg:
+                    st.error(f"Erro ao carregar dados: {err_msg}")
+                    st.session_state.slot_map_consultation = {
+                        "location_id": None, "vehicle_id": None, "start_time": None, "end_time": None,
+                        "slots": None, "avail": None, "reservations": None
+                    }
                 else:
-                    st.session_state.search_vagas = {
-                        "vagas": vagas,
+                    st.session_state.slot_map_consultation = {
                         "location_id": selected_loc_id,
                         "vehicle_id": selected_veh.get("id"),
                         "start_time": start_iso,
-                        "end_time": end_iso
+                        "end_time": end_iso,
+                        "slots": slots,
+                        "avail": avail,
+                        "reservations": reservations
                     }
 
-    if st.session_state.search_vagas:
-        search_data = st.session_state.search_vagas
-        vagas = search_data.get("vagas", [])
-        st.success(f"{len(vagas)} vaga(s) disponível(is)!")
+    consult_data = st.session_state.slot_map_consultation
+    if consult_data.get("slots") is not None and consult_data.get("avail") is not None and consult_data.get("reservations") is not None:
+        slots = consult_data["slots"]
+        avail = consult_data["avail"]
+        reservations = consult_data["reservations"]
+        st.success(f"Consulta carregada! Total de vagas: {len(slots)} | Livres: {len(avail) if isinstance(avail, list) else 0}")
         
         st.subheader("Grid de Vagas Disponíveis")
-        grid_cols = st.columns(4)
-        for idx, vaga in enumerate(vagas):
-            g_col = grid_cols[idx % 4]
-            with g_col:
-                with st.container(border=True):
-                    st.markdown(f"#### 🅿️ {vaga.get('numero')}")
-                    st.caption(f"Tipo: {vaga.get('tipo', '').upper()}")
-                    if st.button("Reservar", key=f"book_grid_{vaga.get('id')}", use_container_width=True):
-                        payload = {
-                            "location_id": search_data["location_id"],
-                            "vaga_id": vaga.get("id"),
-                            "vehicle_id": search_data["vehicle_id"],
-                            "start_time": search_data["start_time"],
-                            "end_time": search_data["end_time"]
-                        }
-                        with st.spinner("Confirmando reserva..."):
-                            res_data, err_book = api_request("POST", "/reservation", payload)
-                            if err_book:
-                                st.error(f"Erro ao realizar reserva: {err_book}")
-                            elif not isinstance(res_data, dict) or not res_data.get("id"):
-                                st.error(f"Erro: A resposta da API não retornou o ID da reserva. Resposta: {res_data}")
-                            else:
-                                res_id = res_data.get('id')
-                                st.session_state.success_message = f"Reserva #{res_id} realizada com sucesso!"
-                                st.session_state.last_created_res_id = res_id
-                                st.session_state.search_vagas = None
-                                st.session_state.nav_index = 2
-                                st.rerun()
+        if not avail:
+            st.info("Nenhuma vaga disponível para este período e tipo de veículo.")
+        else:
+            grid_cols = st.columns(4)
+            for idx, vaga in enumerate(avail):
+                g_col = grid_cols[idx % 4]
+                with g_col:
+                    with st.container(border=True):
+                        st.markdown(f"#### 🅿️ {vaga.get('numero')}")
+                        st.caption(f"Tipo: {vaga.get('tipo', '').upper()}")
+                        if st.button("Reservar", key=f"book_grid_{vaga.get('id')}", use_container_width=True):
+                            payload = {
+                                "location_id": consult_data["location_id"],
+                                "vaga_id": vaga.get("id"),
+                                "vehicle_id": consult_data["vehicle_id"],
+                                "start_time": consult_data["start_time"],
+                                "end_time": consult_data["end_time"]
+                            }
+                            with st.spinner("Confirmando reserva..."):
+                                res_data, err_book = api_request("POST", "/reservation", payload)
+                                if err_book:
+                                    st.error(f"Erro ao realizar reserva: {err_book}")
+                                elif not isinstance(res_data, dict) or not res_data.get("id"):
+                                    st.error(f"Erro: A resposta da API não retornou o ID da reserva. Resposta: {res_data}")
+                                else:
+                                    res_id = res_data.get('id')
+                                    st.session_state.success_message = f"Reserva #{res_id} realizada com sucesso!"
+                                    st.session_state.last_created_res_id = res_id
+                                    st.session_state.slot_map_consultation = {
+                                        "location_id": None, "vehicle_id": None, "start_time": None, "end_time": None,
+                                        "slots": None, "avail": None, "reservations": None
+                                    }
+                                    st.session_state.nav_index = 2
+                                    st.rerun()
 
 @st.dialog("🎟️ Ticket de Reserva")
 def view_ticket_dialog(res_id):
