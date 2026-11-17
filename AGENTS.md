@@ -21,3 +21,5 @@ Toda regra de autorização e validação deve ser aplicada no Xano. O valor cob
 ## Desenvolvimento e OpenSpec
 
 Mudanças devem seguir o fluxo OpenSpec: explore → propose → review → apply → archive.
+
+O código do Xano usado é SOMENTE a pasta xano-pull-av (arquivos .xs). A pasta xano contém apenas documentação JSON antiga e não deve ser usada para push. Todo push usa `-d xano-pull-av` com `-i` do arquivo alterado, sem `--sync` nem `--delete`. Não leia nem edite outras pastas xano-*, inclusive xano-backup.

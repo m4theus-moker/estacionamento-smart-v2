@@ -7,3 +7,7 @@ test_cliente_403.ps1
 __pycache__/
 .gemini/
 *.pyc
+xano-backup*/
+*.zip
+*.bak
+.pytest_cache/
